@@ -1,0 +1,208 @@
+name: "Unpacker: sync with 7-Zip, build, release"
+
+# Keeps this branch up to date with upstream 7-Zip (ip7z/7zip):
+#   - every day: merge upstream if there is a new 7-Zip version,
+#   - build 7zz.exe (Alone2 bundle, MSVC x64) and run the unpacker tests,
+#   - only if build and tests are OK: push the merge and publish Unpack.exe
+#     as release "v<7-Zip version>-unpacker".
+# A scheduled run does nothing, if there is no new upstream commit.
+# Scheduled runs work only on the default branch of the repository.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main, feat/unpacker]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: unpacker-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/ip7z/7zip.git
+  UPSTREAM_BRANCH: main
+  BUNDLE_PATH: 'CPP\7zip\Bundles\Alone2'
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  unpacker:
+    name: Sync, build, test, release
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Keep the schedule enabled
+        # GitHub disables scheduled workflows after 60 days without repository activity
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/unpacker.yml/enable" || true
+
+      - name: Merge upstream 7-Zip
+        id: merge
+        if: github.event_name != 'push'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags "$UPSTREAM_URL" "$UPSTREAM_BRANCH"
+          if git merge-base --is-ancestor FETCH_HEAD HEAD; then
+            echo "No new upstream commits."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git log --oneline HEAD..FETCH_HEAD
+          if ! git merge --no-edit -m "Merge upstream 7-Zip" FETCH_HEAD; then
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            echo "::error::Upstream 7-Zip does not merge cleanly into the unpacker patch. Merge it by hand."
+            exit 1
+          fi
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+      - name: Plan
+        id: plan
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/.*#define MY_VERSION_NUMBERS[[:space:]]*"\([^"]*\)".*/\1/p' C/7zVersion.h | head -1)
+          TAG="v${VERSION}-unpacker"
+          if gh release view "$TAG" -R "${{ github.repository }}" > /dev/null 2>&1; then EXISTS=true; else EXISTS=false; fi
+          BUILD=false
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ steps.merge.outputs.merged }}" = "true" ] || [ "$EXISTS" = "false" ]; then BUILD=true; fi
+          echo "version=$VERSION tag=$TAG release_exists=$EXISTS build=$BUILD"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "release_exists=$EXISTS"
+            echo "build=$BUILD"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build (nmake, x64)
+        if: steps.plan.outputs.build == 'true'
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSDIR=%%i"
+          call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cd /d "%GITHUB_WORKSPACE%\%BUNDLE_PATH%"
+          nmake /nologo PLATFORM=x64 > build.log 2>&1
+          if errorlevel 1 (
+            powershell -Command "Get-Content build.log -Tail 150"
+            exit /b 1
+          )
+          copy /y x64\7zz.exe "%RUNNER_TEMP%\Unpack.exe"
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: log-windows-msvc-x64
+          path: ${{ env.BUNDLE_PATH }}\build.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: "Test: double-click mode unpacks and deletes the parts"
+        if: steps.plan.outputs.build == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "$env:RUNNER_TEMP\Unpack.exe"
+          $t = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\ok"
+          $src = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\src"
+          $a = Join-Path $src 'Film [2026] & more.mkv'
+          $b = Join-Path $src 'Serie.S01E01.mkv'
+          $rnd = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+          $buf = New-Object byte[] 3500000; $rnd.GetBytes($buf); [IO.File]::WriteAllBytes($a, $buf)
+          $buf = New-Object byte[] 1200000; $rnd.GetBytes($buf); [IO.File]::WriteAllBytes($b, $buf)
+          python .github\scripts\mkrar5.py $a (Join-Path $t 'Film [2026] & more') 1000000 1
+          python .github\scripts\mkrar5.py $b (Join-Path $t 'Serie.S01E01') 500000 2
+          Set-Content (Join-Path $t 'note.txt') 'hi'
+          Copy-Item $exe $t
+          Push-Location $t
+          .\Unpack.exe a unrelated.zip note.txt | Out-Null
+          Get-ChildItem | Format-Table Name, Length
+          # program is started without arguments, like a double click. Enter closes it.
+          "`n" | .\Unpack.exe
+          $code = $LASTEXITCODE
+          Get-ChildItem | Format-Table Name, Length
+          if ($code -ne 0) { throw "exit code $code" }
+          if (Get-ChildItem *.rar) { throw 'parts were not deleted' }
+          if (-not (Test-Path unrelated.zip)) { throw 'unrelated archive was deleted' }
+          foreach ($f in $a, $b) {
+            $out = Join-Path $t (Split-Path $f -Leaf)
+            if ((Get-FileHash -LiteralPath $out).Hash -ne (Get-FileHash -LiteralPath $f).Hash) { throw "content differs: $out" }
+          }
+          Pop-Location
+
+      - name: "Test: missing part keeps all parts"
+        if: steps.plan.outputs.build == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $t = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\bad"
+          python .github\scripts\mkrar5.py "$env:RUNNER_TEMP\src\Serie.S01E01.mkv" (Join-Path $t 'Serie.S01E01') 500000 2
+          Remove-Item (Join-Path $t 'Serie.S01E01.part03.rar')
+          Copy-Item "$env:RUNNER_TEMP\Unpack.exe" $t
+          Push-Location $t
+          "`n" | .\Unpack.exe
+          $code = $LASTEXITCODE
+          Get-ChildItem | Format-Table Name, Length
+          if ($code -eq 0) { throw 'exit code must not be 0' }
+          if ((Get-ChildItem *.rar).Count -ne 2) { throw 'parts must be kept' }
+          Pop-Location
+          exit 0  # the non-zero exit code of Unpack.exe is expected here
+
+      - name: "Test: drag and drop of a later part"
+        if: steps.plan.outputs.build == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $t = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\drop"
+          python .github\scripts\mkrar5.py "$env:RUNNER_TEMP\src\Serie.S01E01.mkv" (Join-Path $t 'Serie.S01E01') 500000 2
+          "`n" | & "$env:RUNNER_TEMP\Unpack.exe" (Join-Path $t 'Serie.S01E01.part02.rar')
+          $code = $LASTEXITCODE
+          Get-ChildItem $t | Format-Table Name, Length
+          if ($code -ne 0) { throw "exit code $code" }
+          if (Get-ChildItem (Join-Path $t '*.rar')) { throw 'parts were not deleted' }
+          if ((Get-FileHash (Join-Path $t 'Serie.S01E01.mkv')).Hash -ne (Get-FileHash "$env:RUNNER_TEMP\src\Serie.S01E01.mkv").Hash) { throw 'content differs' }
+
+      - name: Upload artifact
+        if: steps.plan.outputs.build == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: Unpack-win-x64
+          path: ${{ runner.temp }}\Unpack.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Push the merge
+        if: steps.merge.outputs.merged == 'true'
+        shell: bash
+        run: git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Publish release
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          TAG="${{ steps.plan.outputs.tag }}"
+          VERSION="${{ steps.plan.outputs.version }}"
+          SHA=$(git rev-parse HEAD)
+          if [ "${{ steps.plan.outputs.release_exists }}" = "true" ]; then
+            gh release delete "$TAG" -R "${{ github.repository }}" --cleanup-tag -y
+          fi
+          cp "$RUNNER_TEMP/Unpack.exe" Unpack.exe
+          gh release create "$TAG" Unpack.exe -R "${{ github.repository }}" --target "$SHA" --latest \
+            --title "Unpack (7-Zip $VERSION)" \
+            --notes "Unpack.exe is a modified build of 7-Zip $VERSION (64-bit Windows, standalone).
+
+          Put it in the folder with the downloaded name.partN.rar files and double-click it: the videos are unpacked and the parts are deleted. Parts of a set that could not be unpacked are kept.
+
+          7-Zip is licensed under the GNU LGPL. The source code of this build is this repository at commit $SHA."
