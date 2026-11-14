@@ -621,6 +621,12 @@ HRESULT Extract(
         && !arcLink.GetArc()->IsHashHandler(op)
         && options.DeleteCallback->IsLastArcOk())
     {
+      const CArc &lastArc = arcLink.Arcs.Back();
+      if (lastArc.FormatIndex >= 0
+          && codecs->Formats[(unsigned)lastArc.FormatIndex].Is_Split())
+        options.DeleteCallback->Arc_NotDeleted_RawSplit(arcPath);
+      else
+      {
       UStringVector delPaths;
       delPaths.Add(arcPath);
       FOR_VECTOR (v, arcLink.VolumePaths)
@@ -642,6 +648,7 @@ HRESULT Extract(
       {
         const bool res = NFile::NDir::DeleteFileAlways(us2fs(delPaths[k]));
         options.DeleteCallback->ArcFile_DeleteResult(delPaths[k], res);
+      }
       }
     }
   }

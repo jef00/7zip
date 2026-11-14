@@ -70,6 +70,10 @@ struct IArcDeleteCallback
   virtual bool IsLastArcOk() = 0;
   // is called for each archive file (volume) after delete attempt
   virtual void ArcFile_DeleteResult(const UString &path, bool wasDeleted) = 0;
+  /* is called, if archive was extracted, but it is not deleted, because
+     it is raw split set (name.001) : such set has no checksum and no size
+     of original file, so we can not know that all parts were present. */
+  virtual void Arc_NotDeleted_RawSplit(const UString &path) = 0;
   // is called for each incomplete output file after delete attempt
   virtual void OutFile_DeleteResult(const UString &path, bool wasDeleted) = 0;
   virtual ~IArcDeleteCallback() {}

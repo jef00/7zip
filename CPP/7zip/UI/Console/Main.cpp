@@ -808,13 +808,15 @@ static void PrintHexId(CStdOutStream &so, UInt64 id)
 // ---------- Unpacker mode ----------
 /*
   Unpacker mode is used, if program was started
-    - without arguments (double click): all RAR volume sets
-      (name.part1.rar, name.part2.rar, ...) in folder of program are processed.
-      If there are no such sets there, we use current folder instead.
+    - without arguments (double click): all archives (.rar, .zip, .7z) and
+      first volumes of split sets (name.part1.rar, name.7z.001, name.zip.001)
+      in folder of program are processed, after user confirmed the list.
+      If there are no archives there, we use current folder instead.
     - or with only names of existing files (drag and drop to program icon).
-  It works as:  x -sdel -aoa -y -o{folder of archive} ...
+  It works as:  x -sdel -aou -o{folder of archive} ...
   So archives are extracted, and all volumes of archive are deleted,
-  if there were no errors.
+  if there were no errors. Existing files are not overwritten:
+  new file gets another name (-aou).
 */
 
 #ifndef _WIN32
@@ -826,8 +828,10 @@ FString GetModuleDirPrefix(); // ArchiveCommandLine.cpp : folder from args[0]
 
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
+extern bool g_Unpacker_WasCanceled;
 bool g_UnpackerMode = false;
 unsigned g_Unpacker_NumSets = 0;
+bool g_Unpacker_WasCanceled = false;
 
 // name.part{digits}.rar
 static bool Unp_ParseRarPartName(const UString &name, unsigned &baseLen, unsigned &numDigits, UInt32 &num)
@@ -889,18 +893,72 @@ static void Unp_ListFiles(const FString &dirPrefix, UStringVector &names)
   names.Sort();
 }
 
-// finds first volumes of all RAR volume sets in folder
-static void Unp_FindFirstVolumes(const FString &dirPrefix, UStringVector &paths)
+static bool Unp_HasExt(const UString &name, const char *ext)
+{
+  const unsigned extLen = MyStringLen(ext);
+  return name.Len() > extLen
+      && StringsAreEqualNoCase_Ascii(name.Ptr(name.Len() - extLen), ext);
+}
+
+/* finds archives in folder:
+     - name.part1.rar : first volume of RAR set (other volumes are skipped),
+     - name.rar, name.zip, name.7z : single archives, and also first volumes
+       of old RAR sets (name.r00) and ZIP sets (name.z01),
+     - name.7z.001, name.zip.001, name.rar.001 : first volume of split archive.
+       Raw split sets (name.mkv.001) are skipped: they have no checksum, so
+       we can not know that all parts are present.
+   We don't use full list of formats that 7-Zip can open (exe, docx, iso ...),
+   because the archives are deleted after extraction. */
+static void Unp_FindArchives(const FString &dirPrefix, UStringVector &paths)
 {
   UStringVector names;
   Unp_ListFiles(dirPrefix, names);
   FOR_VECTOR (i, names)
   {
+    const UString &name = names[i];
     unsigned baseLen, numDigits;
     UInt32 num;
-    if (Unp_ParseRarPartName(names[i], baseLen, numDigits, num) && num == 1)
-      paths.Add(fs2us(dirPrefix) + names[i]);
+    bool isArc;
+    if (Unp_ParseRarPartName(name, baseLen, numDigits, num))
+      isArc = (num == 1);
+    else
+      isArc = Unp_HasExt(name, ".rar")
+           || Unp_HasExt(name, ".zip")
+           || Unp_HasExt(name, ".7z")
+           || Unp_HasExt(name, ".7z.001")
+           || Unp_HasExt(name, ".zip.001")
+           || Unp_HasExt(name, ".rar.001");
+    if (isArc)
+      paths.Add(fs2us(dirPrefix) + name);
   }
+}
+
+// shows the list of archives and asks user. Returns true, if user answered Yes.
+static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
+{
+  g_StdOut << "Folder: " << fs2us(dirPrefix) << endl << endl;
+  const unsigned prefixLen = fs2us(dirPrefix).Len();
+  FOR_VECTOR (i, arcs)
+    g_StdOut << "  " << (i + 1) << ". " << arcs[i].Ptr(prefixLen) << endl;
+  g_StdOut << endl;
+  if (arcs.Size() == 1)
+    g_StdOut << "Unpack this archive and delete it after that?";
+  else
+    g_StdOut << "Unpack these " << arcs.Size() << " archives and delete them after that?";
+  g_StdOut << endl << "Type Y (yes) or N (no) and press Enter: ";
+  g_StdOut.Flush();
+  int answer = 0;
+  for (;;)
+  {
+    const int c = getchar();
+    if (c == EOF || c == '\n')
+      break;
+    if (answer == 0 && c != ' ' && c != '\t' && c != '\r')
+      answer = c;
+  }
+  g_StdOut << endl;
+  // J : "ja" (Dutch, German)
+  return answer == 'y' || answer == 'Y' || answer == 'j' || answer == 'J';
 }
 
 // if (path) is some volume (name.part3.rar), we return path of first volume in (res).
@@ -914,7 +972,26 @@ static void Unp_GetFirstVolume(const UString &path, UString &res)
   res = fs2us(dirPrefix) + name;
   unsigned baseLen, numDigits;
   UInt32 num;
-  if (!Unp_ParseRarPartName(name, baseLen, numDigits, num) || num == 1)
+  if (!Unp_ParseRarPartName(name, baseLen, numDigits, num))
+  {
+    // name.7z.003 -> name.7z.001
+    const unsigned len = name.Len();
+    if (len > 4 && name[len - 4] == '.')
+    {
+      bool allDigits = true;
+      for (unsigned k = len - 3; k < len; k++)
+        if (name[k] < '0' || name[k] > '9')
+          allDigits = false;
+      if (allDigits)
+      {
+        const UString first = fs2us(dirPrefix) + name.Left(len - 3) + L"001";
+        if (NFile::NFind::DoesFileExist_Raw(us2fs(first)))
+          res = first;
+      }
+    }
+    return;
+  }
+  if (num == 1)
     return;
   const UString base = name.Left(baseLen);
   UStringVector names;
@@ -950,7 +1027,7 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
         dirPrefix = modulePrefix;
       NFile::NName::NormalizeDirPathPrefix(dirPrefix);
     }
-    Unp_FindFirstVolumes(dirPrefix, arcs);
+    Unp_FindArchives(dirPrefix, arcs);
     if (arcs.IsEmpty())
     {
       // program can be in another folder (PATH): we try current folder
@@ -959,8 +1036,19 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
       {
         NFile::NName::NormalizeDirPathPrefix(curPrefix);
         if (CompareFileNames(fs2us(curPrefix), fs2us(dirPrefix)) != 0)
-          Unp_FindFirstVolumes(curPrefix, arcs);
+        {
+          Unp_FindArchives(curPrefix, arcs);
+          if (!arcs.IsEmpty())
+            dirPrefix = curPrefix;
+        }
       }
+    }
+    if (!arcs.IsEmpty() && !Unp_Confirm(dirPrefix, arcs))
+    {
+      g_UnpackerMode = true;
+      g_Unpacker_WasCanceled = true;
+      commandStrings.Clear();
+      return true;
     }
   }
   else
@@ -997,7 +1085,7 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
 
   commandStrings.Add(UString("x"));
   commandStrings.Add(UString("-sdel"));
-  commandStrings.Add(UString("-aoa"));
+  commandStrings.Add(UString("-aou"));
   commandStrings.Add(UString("-y"));
   commandStrings.Add(UString("-o") + fs2us(outDir));
   for (unsigned i = 1; i < arcs.Size(); i++)
@@ -1015,10 +1103,19 @@ struct CArcDeleteCallbackConsole Z7_final: public IArcDeleteCallback
   CStdOutStream *Se;
   UInt64 NumDeleted;
   UInt64 NumErrors;
+  UInt64 NumNotDeleted;
 
-  CArcDeleteCallbackConsole(): Ecs(NULL), So(NULL), Se(NULL), NumDeleted(0), NumErrors(0) {}
+  CArcDeleteCallbackConsole(): Ecs(NULL), So(NULL), Se(NULL), NumDeleted(0), NumErrors(0), NumNotDeleted(0) {}
 
   virtual bool IsLastArcOk() Z7_override { return Ecs->LastArcOk; }
+  virtual void Arc_NotDeleted_RawSplit(const UString &path) Z7_override
+  {
+    NumNotDeleted++;
+    if (So)
+      *So << "NOT deleted: " << path << endl
+          << "  Split parts without checksum: the program can not check that the file is complete." << endl
+          << "  Check the unpacked file and delete the parts yourself." << endl;
+  }
   virtual void OutFile_DeleteResult(const UString &path, bool wasDeleted) Z7_override
   {
     if (wasDeleted)
@@ -1740,7 +1837,7 @@ int Main2(
 
       if (isError)
         retCode = NExitCode::kFatalError;
-      else if (deleteCallback.NumErrors != 0)
+      else if (deleteCallback.NumErrors != 0 || deleteCallback.NumNotDeleted != 0)
         retCode = NExitCode::kWarning;
       
       if (so) {

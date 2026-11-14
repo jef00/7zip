@@ -241,6 +241,7 @@ static int Main_Orig
 
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
+extern bool g_Unpacker_WasCanceled;
 
 int Z7_CDECL main
 (
@@ -259,15 +260,20 @@ int Z7_CDECL main
     g_StdOut.Flush();
     g_StdErr.Flush();
     const char *s;
-    if (g_Unpacker_NumSets == 0)
-      s = "Nothing to unpack: no files like \"name.part1.rar\" were found.\n"
-          "Put this program in the folder with the downloaded parts and start it again.";
+    if (g_Unpacker_WasCanceled)
+      s = "Nothing was done.";
+    else if (g_Unpacker_NumSets == 0)
+      s = "Nothing to unpack: no archives (rar, zip, 7z or split parts) were found.\n"
+          "Put this program in the folder with the downloaded files and start it again.";
+    else if (res == NExitCode::kWarning)
+      s = "Unpacked, but with warnings: read the messages above.\n"
+          "Some archives were NOT deleted.";
     else if (res == 0)
-      s = "DONE. Everything was unpacked. The downloaded parts were deleted.";
+      s = "DONE. Everything was unpacked. The archives were deleted.";
     else
       s = "NOT EVERYTHING WAS UNPACKED.\n"
           "Usually a part is missing or its download was not finished.\n"
-          "The parts that could not be unpacked were NOT deleted.\n"
+          "The archives that could not be unpacked were NOT deleted.\n"
           "Download all parts and start this program again.";
     printf("\n----------------------------------------\n%s\n\nPress Enter to close this window.\n", s);
     fflush(stdout);
