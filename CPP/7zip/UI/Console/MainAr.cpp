@@ -242,6 +242,7 @@ static int Main_Orig
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
 extern bool g_Unpacker_WasCanceled;
+extern bool g_Unpacker_KeepArcs;
 
 int Z7_CDECL main
 (
@@ -268,6 +269,8 @@ int Z7_CDECL main
     else if (res == NExitCode::kWarning)
       s = "Unpacked, but with warnings: read the messages above.\n"
           "Some archives were NOT deleted.";
+    else if (res == 0 && g_Unpacker_KeepArcs)
+      s = "DONE. Everything was unpacked. The archives were kept.";
     else if (res == 0)
       s = "DONE. Everything was unpacked. The archives were deleted.";
     else

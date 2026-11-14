@@ -611,6 +611,7 @@ HRESULT Extract(
          - overwrite mode can not skip files,
          - UI reports that there were no errors and no warnings. */
     if (options.DeleteArcAfterExtract
+        && !options.KeepArcAfterExtract
         && options.DeleteCallback
         && !options.TestMode
         && !options.StdInMode

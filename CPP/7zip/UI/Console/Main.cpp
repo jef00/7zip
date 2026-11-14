@@ -811,6 +811,7 @@ static void PrintHexId(CStdOutStream &so, UInt64 id)
     - without arguments (double click): all archives (.rar, .zip, .7z) and
       first volumes of split sets (name.part1.rar, name.7z.001, name.zip.001)
       in folder of program are processed, after user confirmed the list.
+      User can also select to keep the archives.
       If there are no archives there, we use current folder instead.
     - or with only names of existing files (drag and drop to program icon).
   It works as:  x -sdel -aou -o{folder of archive} ...
@@ -829,6 +830,8 @@ FString GetModuleDirPrefix(); // ArchiveCommandLine.cpp : folder from args[0]
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
 extern bool g_Unpacker_WasCanceled;
+extern bool g_Unpacker_KeepArcs;
+bool g_Unpacker_KeepArcs = false;
 bool g_UnpackerMode = false;
 unsigned g_Unpacker_NumSets = 0;
 bool g_Unpacker_WasCanceled = false;
@@ -933,8 +936,11 @@ static void Unp_FindArchives(const FString &dirPrefix, UStringVector &paths)
   }
 }
 
-// shows the list of archives and asks user. Returns true, if user answered Yes.
-static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
+/* shows the list of archives and asks user. Returns:
+     0 : do nothing
+     1 : unpack and delete archives
+     2 : unpack and keep archives */
+static unsigned Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
 {
   g_StdOut << "Folder: " << fs2us(dirPrefix) << endl << endl;
   const unsigned prefixLen = fs2us(dirPrefix).Len();
@@ -942,10 +948,14 @@ static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
     g_StdOut << "  " << (i + 1) << ". " << arcs[i].Ptr(prefixLen) << endl;
   g_StdOut << endl;
   if (arcs.Size() == 1)
-    g_StdOut << "Unpack this archive and delete it after that?";
+    g_StdOut << "Unpack this archive?";
   else
-    g_StdOut << "Unpack these " << arcs.Size() << " archives and delete them after that?";
-  g_StdOut << endl << "Type Y (yes) or N (no) and press Enter: ";
+    g_StdOut << "Unpack these " << arcs.Size() << " archives?";
+  g_StdOut << endl
+      << "  Y = yes, unpack and delete the archives" << endl
+      << "  K = unpack and keep the archives" << endl
+      << "  N = no, do nothing" << endl
+      << "Type Y, K or N and press Enter: ";
   g_StdOut.Flush();
   int answer = 0;
   for (;;)
@@ -958,7 +968,11 @@ static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
   }
   g_StdOut << endl;
   // J : "ja" (Dutch, German)
-  return answer == 'y' || answer == 'Y' || answer == 'j' || answer == 'J';
+  if (answer == 'y' || answer == 'Y' || answer == 'j' || answer == 'J')
+    return 1;
+  if (answer == 'k' || answer == 'K')
+    return 2;
+  return 0;
 }
 
 // if (path) is some volume (name.part3.rar), we return path of first volume in (res).
@@ -1043,12 +1057,17 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
         }
       }
     }
-    if (!arcs.IsEmpty() && !Unp_Confirm(dirPrefix, arcs))
+    if (!arcs.IsEmpty())
     {
-      g_UnpackerMode = true;
-      g_Unpacker_WasCanceled = true;
-      commandStrings.Clear();
-      return true;
+      const unsigned answer = Unp_Confirm(dirPrefix, arcs);
+      if (answer == 0)
+      {
+        g_UnpackerMode = true;
+        g_Unpacker_WasCanceled = true;
+        commandStrings.Clear();
+        return true;
+      }
+      g_Unpacker_KeepArcs = (answer == 2);
     }
   }
   else
@@ -1747,6 +1766,7 @@ int Main2(
       deleteCallback.So = g_StdStream;
       deleteCallback.Se = g_ErrStream;
       eo.DeleteCallback = &deleteCallback;
+      eo.KeepArcAfterExtract = g_Unpacker_KeepArcs;
 
       UString errorMessage;
       CDecompressStat stat;
