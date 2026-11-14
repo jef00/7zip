@@ -630,6 +630,7 @@ HRESULT CExtractCallbackConsole::BeforeOpen(const wchar_t *name, bool testMode)
   RINOK(CheckBreak2())
 
   NumTryArcs++;
+  LastArcOk = false;
   ThereIsError_in_Current = false;
   ThereIsWarning_in_Current = false;
   NumFileErrors_in_Current = 0;
@@ -913,7 +914,10 @@ HRESULT CExtractCallbackConsole::ExtractResult(HRESULT result)
       if (ThereIsWarning_in_Current)
         NumArcsWithWarnings++;
       else
+      {
         NumOkArcs++;
+        LastArcOk = true;
+      }
       if (_so)
         *_so << kEverythingIsOk << endl;
     }

@@ -100,7 +100,7 @@ static inline bool CheckIsa()
   */
 }
 
-int Z7_CDECL main
+static int Main_Orig
 (
   #ifndef _WIN32
   int numArgs, char *args[]
@@ -231,5 +231,52 @@ int Z7_CDECL main
     return (NExitCode::kFatalError);
   }
 
+  return res;
+}
+
+
+// ---------- Unpacker mode ----------
+
+#include <stdio.h>
+
+extern bool g_UnpackerMode;
+extern unsigned g_Unpacker_NumSets;
+
+int Z7_CDECL main
+(
+  #ifndef _WIN32
+  int numArgs, char *args[]
+  #endif
+)
+{
+  const int res = Main_Orig(
+    #ifndef _WIN32
+    numArgs, args
+    #endif
+    );
+  if (g_UnpackerMode)
+  {
+    g_StdOut.Flush();
+    g_StdErr.Flush();
+    const char *s;
+    if (g_Unpacker_NumSets == 0)
+      s = "Nothing to unpack: no files like \"name.part1.rar\" were found.\n"
+          "Put this program in the folder with the downloaded parts and start it again.";
+    else if (res == 0)
+      s = "DONE. Everything was unpacked. The downloaded parts were deleted.";
+    else
+      s = "NOT EVERYTHING WAS UNPACKED.\n"
+          "Usually a part is missing or its download was not finished.\n"
+          "The parts that could not be unpacked were NOT deleted.\n"
+          "Download all parts and start this program again.";
+    printf("\n----------------------------------------\n%s\n\nPress Enter to close this window.\n", s);
+    fflush(stdout);
+    for (;;)
+    {
+      const int c = getchar();
+      if (c == '\n' || c == EOF)
+        break;
+    }
+  }
   return res;
 }

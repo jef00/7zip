@@ -40,6 +40,10 @@ struct CExtractOptionsBase
   CExtractNtOptions NtOptions;
   
   FString OutputDir; // normalized : with path separator at the end
+
+  // -sdel for extract commands: delete archive (and all its volumes)
+  // after it was extracted without errors and warnings.
+  bool DeleteArcAfterExtract;
   UString HashDir;
 
   CExtractOptionsBase():
@@ -50,12 +54,25 @@ struct CExtractOptionsBase
       PathMode(NExtract::NPathMode::kFullPaths),
       OverwriteMode(NExtract::NOverwriteMode::kAsk),
       ZoneMode(NExtract::NZoneIdMode::kNone),
-      OutDirMode(NExtractOutDirMode::k_ReplaceAsterisk)
+      OutDirMode(NExtractOutDirMode::k_ReplaceAsterisk),
+      DeleteArcAfterExtract(false)
       {}
+};
+
+/* callback for (DeleteArcAfterExtract) mode.
+   The UI knows whether the archive that was just processed is OK. */
+struct IArcDeleteCallback
+{
+  // true, if last processed archive was extracted without errors and warnings
+  virtual bool IsLastArcOk() = 0;
+  // is called for each archive file (volume) after delete attempt
+  virtual void ArcFile_DeleteResult(const UString &path, bool wasDeleted) = 0;
+  virtual ~IArcDeleteCallback() {}
 };
 
 struct CExtractOptions: public CExtractOptionsBase
 {
+  IArcDeleteCallback *DeleteCallback;
   bool StdInMode;
   bool StdOutMode;
   bool YesToAll;
@@ -75,6 +92,7 @@ struct CExtractOptions: public CExtractOptionsBase
   */
 
   CExtractOptions():
+      DeleteCallback(NULL),
       StdInMode(false),
       StdOutMode(false),
       YesToAll(false),

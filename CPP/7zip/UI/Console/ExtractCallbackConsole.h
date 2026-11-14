@@ -129,6 +129,7 @@ class CExtractCallbackConsole Z7_final:
 public:
   bool ThereIsError_in_Current;
   bool ThereIsWarning_in_Current;
+  bool LastArcOk; // last archive was processed without errors and warnings
   bool NeedFlush;
 
 private:
@@ -194,6 +195,7 @@ public:
     
     ThereIsError_in_Current = false;
     ThereIsWarning_in_Current = false;
+    LastArcOk = false;
 
     NumOkArcs = 0;
     NumCantOpenArcs = 0;

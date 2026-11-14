@@ -574,6 +574,47 @@ HRESULT Extract(
     ecs->LocalProgressSpec->OutSize = ecs->UnpackSize;
     if (!errorMessage.IsEmpty())
       return E_FAIL;
+
+    /* -sdel : delete archive and all its volumes.
+       We do it only if we are sure that everything was extracted:
+         - real extraction to files (no test, no stdin / stdout),
+         - no file filter (all items of archive were requested),
+         - overwrite mode can not skip files,
+         - UI reports that there were no errors and no warnings. */
+    if (options.DeleteArcAfterExtract
+        && options.DeleteCallback
+        && !options.TestMode
+        && !options.StdInMode
+        && !options.StdOutMode
+        && options.OverwriteMode != NExtract::NOverwriteMode::kAsk
+        && options.OverwriteMode != NExtract::NOverwriteMode::kSkip
+        && wildcardCensor.AreAllAllowed()
+        && !arcLink.GetArc()->IsHashHandler(op)
+        && options.DeleteCallback->IsLastArcOk())
+    {
+      UStringVector delPaths;
+      delPaths.Add(arcPath);
+      FOR_VECTOR (v, arcLink.VolumePaths)
+      {
+        const UString &vp = arcLink.VolumePaths[v];
+        bool found = false;
+        FOR_VECTOR (k, delPaths)
+          if (CompareFileNames(delPaths[k], vp) == 0)
+          {
+            found = true;
+            break;
+          }
+        if (!found)
+          delPaths.Add(vp);
+      }
+      // we must close all file handles of archive before deleting
+      arcLink.Release();
+      FOR_VECTOR (k, delPaths)
+      {
+        const bool res = NFile::NDir::DeleteFileAlways(us2fs(delPaths[k]));
+        options.DeleteCallback->ArcFile_DeleteResult(delPaths[k], res);
+      }
+    }
   }
 
   if (multi || thereAreNotOpenArcs)

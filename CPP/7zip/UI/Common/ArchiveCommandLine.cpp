@@ -1753,6 +1753,18 @@ void CArcCmdLineParser::Parse2(CArcCmdLineOptions &options)
         eo.OverwriteMode = NExtract::NOverwriteMode::kOverwrite;
         eo.OverwriteMode_Force = true;
       }
+
+      if (parser[NKey::kDeleteAfterCompressing].ThereIs
+          && !options.Command.IsTestCommand())
+      {
+        if (eo.OverwriteMode == NExtract::NOverwriteMode::kAsk
+            || eo.OverwriteMode == NExtract::NOverwriteMode::kSkip)
+          throw CArcCmdLineException(
+              "-sdel for extraction requires -y, -aoa, -aou or -aot (files can not be skipped)");
+        if (options.StdInMode || options.StdOutMode)
+          throw CArcCmdLineException("-sdel can not be used with -si / -so");
+        eo.DeleteArcAfterExtract = true;
+      }
     }
 
     eo.PathMode = options.Command.GetPathMode();
