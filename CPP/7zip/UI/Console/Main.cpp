@@ -809,17 +809,25 @@ static void PrintHexId(CStdOutStream &so, UInt64 id)
 /*
   Unpacker mode is used, if program was started
     - without arguments (double click): all RAR volume sets
-      (name.part1.rar, name.part2.rar, ...) in folder of program are processed,
+      (name.part1.rar, name.part2.rar, ...) in folder of program are processed.
+      If there are no such sets there, we use current folder instead.
     - or with only names of existing files (drag and drop to program icon).
   It works as:  x -sdel -aoa -y -o{folder of archive} ...
   So archives are extracted, and all volumes of archive are deleted,
   if there were no errors.
 */
 
-bool g_UnpackerMode = false;
-unsigned g_Unpacker_NumSets = 0;
+#ifndef _WIN32
+namespace NWindows {
+namespace NDLL {
+FString GetModuleDirPrefix(); // ArchiveCommandLine.cpp : folder from args[0]
+}}
+#endif
+
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
+bool g_UnpackerMode = false;
+unsigned g_Unpacker_NumSets = 0;
 
 // name.part{digits}.rar
 static bool Unp_ParseRarPartName(const UString &name, unsigned &baseLen, unsigned &numDigits, UInt32 &num)
@@ -895,18 +903,19 @@ static void Unp_FindFirstVolumes(const FString &dirPrefix, UStringVector &paths)
   }
 }
 
-// if (path) is some volume (name.part3.rar), we return path of first volume.
-static UString Unp_GetFirstVolume(const UString &path)
+// if (path) is some volume (name.part3.rar), we return path of first volume in (res).
+static void Unp_GetFirstVolume(const UString &path, UString &res)
 {
+  res = path;
   FString dirPrefix, fileName;
   if (!NFile::NDir::GetFullPathAndSplit(us2fs(path), dirPrefix, fileName))
-    return path;
+    return;
   const UString name = fs2us(fileName);
-  const UString full = fs2us(dirPrefix) + name;
+  res = fs2us(dirPrefix) + name;
   unsigned baseLen, numDigits;
   UInt32 num;
   if (!Unp_ParseRarPartName(name, baseLen, numDigits, num) || num == 1)
-    return full;
+    return;
   const UString base = name.Left(baseLen);
   UStringVector names;
   Unp_ListFiles(dirPrefix, names);
@@ -918,9 +927,11 @@ static UString Unp_GetFirstVolume(const UString &path)
         && num2 == 1
         && baseLen2 == baseLen
         && base.IsEqualTo_NoCase(names[i].Left(baseLen2)))
-      return fs2us(dirPrefix) + names[i];
+    {
+      res = fs2us(dirPrefix) + names[i];
+      return;
+    }
   }
-  return full;
 }
 
 /* returns true, if unpacker mode must be used.
@@ -930,14 +941,27 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
   UStringVector arcs;
   if (commandStrings.IsEmpty())
   {
+    /* double click: current folder is folder of program in Windows,
+       but it is home folder in macOS. So we use folder of program at first. */
     FString dirPrefix;
-   #ifdef _WIN32
-    dirPrefix = NWindows::NDLL::GetModuleDirPrefix();
-   #else
-    NFile::NDir::GetCurrentDir(dirPrefix);
-    NFile::NName::NormalizeDirPathPrefix(dirPrefix);
-   #endif
+    {
+      const FString modulePrefix = NWindows::NDLL::GetModuleDirPrefix();
+      if (!NFile::NDir::MyGetFullPathName(modulePrefix, dirPrefix))
+        dirPrefix = modulePrefix;
+      NFile::NName::NormalizeDirPathPrefix(dirPrefix);
+    }
     Unp_FindFirstVolumes(dirPrefix, arcs);
+    if (arcs.IsEmpty())
+    {
+      // program can be in another folder (PATH): we try current folder
+      FString curPrefix;
+      if (NFile::NDir::GetCurrentDir(curPrefix))
+      {
+        NFile::NName::NormalizeDirPathPrefix(curPrefix);
+        if (CompareFileNames(fs2us(curPrefix), fs2us(dirPrefix)) != 0)
+          Unp_FindFirstVolumes(curPrefix, arcs);
+      }
+    }
   }
   else
   {
@@ -951,7 +975,8 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
     }
     FOR_VECTOR (i, commandStrings)
     {
-      const UString first = Unp_GetFirstVolume(commandStrings[i]);
+      UString first;
+      Unp_GetFirstVolume(commandStrings[i], first);
       bool found = false;
       FOR_VECTOR (k, arcs)
         if (CompareFileNames(arcs[k], first) == 0)
