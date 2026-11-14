@@ -67,12 +67,17 @@ struct IArcDeleteCallback
   virtual bool IsLastArcOk() = 0;
   // is called for each archive file (volume) after delete attempt
   virtual void ArcFile_DeleteResult(const UString &path, bool wasDeleted) = 0;
+  // is called for each incomplete output file after delete attempt (DeleteOutFilesOnError mode)
+  virtual void OutFile_DeleteResult(const UString &path, bool wasDeleted) = 0;
   virtual ~IArcDeleteCallback() {}
 };
 
 struct CExtractOptions: public CExtractOptionsBase
 {
   IArcDeleteCallback *DeleteCallback;
+  /* if archive was extracted with errors or warnings, we delete all files
+     that were created from that archive. DeleteCallback is required. */
+  bool DeleteOutFilesOnError;
   bool StdInMode;
   bool StdOutMode;
   bool YesToAll;
@@ -93,6 +98,7 @@ struct CExtractOptions: public CExtractOptionsBase
 
   CExtractOptions():
       DeleteCallback(NULL),
+      DeleteOutFilesOnError(false),
       StdInMode(false),
       StdOutMode(false),
       YesToAll(false),

@@ -142,7 +142,7 @@ jobs:
           }
           Pop-Location
 
-      - name: "Test: missing part keeps all parts"
+      - name: "Test: missing part keeps all parts and deletes the incomplete video"
         if: steps.plan.outputs.build == 'true'
         shell: pwsh
         run: |
@@ -157,6 +157,7 @@ jobs:
           Get-ChildItem | Format-Table Name, Length
           if ($code -eq 0) { throw 'exit code must not be 0' }
           if ((Get-ChildItem *.rar).Count -ne 2) { throw 'parts must be kept' }
+          if (Get-ChildItem *.mkv) { throw 'incomplete video must be deleted' }
           Pop-Location
           exit 0  # the non-zero exit code of Unpack.exe is expected here
 

@@ -557,7 +557,16 @@ HRESULT Extract(
           false;
         #endif
 
-    RINOK(DecompressArchive(
+    const bool deleteOutFilesOnError =
+           options.DeleteOutFilesOnError
+        && options.DeleteCallback
+        && !options.TestMode
+        && !options.StdOutMode;
+    FStringVector createdFiles;
+    if (deleteOutFilesOnError)
+      ecs->CreatedFiles = &createdFiles;
+
+    const HRESULT resDecompress = DecompressArchive(
         codecs,
         arcLink,
         fi.Size + arcLink.VolumesSize,
@@ -565,7 +574,27 @@ HRESULT Extract(
         options,
         calcCrc,
         extractCallback, faeCallback, ecs,
-        errorMessage, packProcessed))
+        errorMessage, packProcessed);
+
+    ecs->CreatedFiles = NULL;
+    if (deleteOutFilesOnError
+        && (resDecompress != S_OK
+          || !errorMessage.IsEmpty()
+          || !options.DeleteCallback->IsLastArcOk()))
+    {
+      /* archive was not extracted correctly.
+         We don't want to keep incomplete files. */
+      FOR_VECTOR (k, createdFiles)
+      {
+        const FString &path = createdFiles[k];
+        NFind::CFileInfo fi2;
+        if (!fi2.Find(path) || fi2.IsDir())
+          continue;
+        const bool res = NFile::NDir::DeleteFileAlways(path);
+        options.DeleteCallback->OutFile_DeleteResult(fs2us(path), res);
+      }
+    }
+    RINOK(resDecompress)
 
     if (!options.StdInMode)
       packProcessed = fi.Size + arcLink.VolumesSize;

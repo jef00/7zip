@@ -493,6 +493,9 @@ public:
   
   FString DirPathPrefix_for_HashFiles;
 
+  // if (CreatedFiles != NULL), paths of all created output files are added to it.
+  FStringVector *CreatedFiles;
+
   CArchiveExtractCallback();
 
   void InitForMulti(bool multiArchives,

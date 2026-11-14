@@ -993,6 +993,16 @@ struct CArcDeleteCallbackConsole Z7_final: public IArcDeleteCallback
   CArcDeleteCallbackConsole(): Ecs(NULL), So(NULL), Se(NULL), NumDeleted(0), NumErrors(0) {}
 
   virtual bool IsLastArcOk() Z7_override { return Ecs->LastArcOk; }
+  virtual void OutFile_DeleteResult(const UString &path, bool wasDeleted) Z7_override
+  {
+    if (wasDeleted)
+    {
+      if (So)
+        *So << "Deleted incomplete file: " << path << endl;
+    }
+    else if (Se)
+      *Se << "WARNING: Cannot delete the incomplete file: " << path << endl;
+  }
   virtual void ArcFile_DeleteResult(const UString &path, bool wasDeleted) Z7_override
   {
     if (wasDeleted)
@@ -1614,6 +1624,8 @@ int Main2(
       deleteCallback.So = g_StdStream;
       deleteCallback.Se = g_ErrStream;
       eo.DeleteCallback = &deleteCallback;
+      // unpacker mode: folder must contain parts or complete files only
+      eo.DeleteOutFilesOnError = g_UnpackerMode;
 
       UString errorMessage;
       CDecompressStat stat;

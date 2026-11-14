@@ -305,6 +305,7 @@ CArchiveExtractCallback::CArchiveExtractCallback():
     _arc(NULL),
     _multiArchives(false)
 {
+  CreatedFiles = NULL;
   #ifdef Z7_USE_SECURITY_CODE
   _saclEnabled = InitLocalPrivileges();
   #endif
@@ -1582,6 +1583,9 @@ HRESULT CArchiveExtractCallback::GetExtractStream(CMyComPtr<ISequentialOutStream
       return S_OK;
     }
   }
+
+  if (CreatedFiles)
+    CreatedFiles->Add(fullProcessedPath);
   
   SET_NEED_SET_OWNER
   _needSetAttrib = needSetAttrib;
