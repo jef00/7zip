@@ -182,7 +182,8 @@ static const char * const kHelpString =
 #endif
     "|*] : set hash function for x, e, h commands\n"
     "  -sdel : delete files after compression,\n"
-    "          or delete archive and its volumes after successful extraction (x, e)\n"
+    "          or (x, e) delete archive and its volumes after successful extraction,\n"
+    "          and delete incomplete files after failed extraction\n"
     "  -seml[.] : send archive by email\n"
     "  -sfx[{name}] : Create SFX archive\n"
     "  -si[{name}] : read data from stdin\n"
@@ -1624,8 +1625,6 @@ int Main2(
       deleteCallback.So = g_StdStream;
       deleteCallback.Se = g_ErrStream;
       eo.DeleteCallback = &deleteCallback;
-      // unpacker mode: folder must contain parts or complete files only
-      eo.DeleteOutFilesOnError = g_UnpackerMode;
 
       UString errorMessage;
       CDecompressStat stat;

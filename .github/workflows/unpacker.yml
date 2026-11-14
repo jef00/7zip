@@ -161,6 +161,25 @@ jobs:
           Pop-Location
           exit 0  # the non-zero exit code of Unpack.exe is expected here
 
+      - name: "Test: command line x -sdel deletes the incomplete video too"
+        if: steps.plan.outputs.build == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $t = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\cli"
+          python .github\scripts\mkrar5.py "$env:RUNNER_TEMP\src\Serie.S01E01.mkv" (Join-Path $t 'Serie.S01E01') 500000 2
+          Remove-Item (Join-Path $t 'Serie.S01E01.part03.rar')
+          & "$env:RUNNER_TEMP\Unpack.exe" x -sdel -y "-o$t" (Join-Path $t 'Serie.S01E01.part01.rar')
+          $code = $LASTEXITCODE
+          Get-ChildItem $t | Format-Table Name, Length
+          if ($code -eq 0) { throw 'exit code must not be 0' }
+          if ((Get-ChildItem (Join-Path $t '*.rar')).Count -ne 2) { throw 'parts must be kept' }
+          if (Get-ChildItem (Join-Path $t '*.mkv')) { throw 'incomplete video must be deleted' }
+          # plain x without -sdel must keep everything
+          & "$env:RUNNER_TEMP\Unpack.exe" x -y "-o$t" (Join-Path $t 'Serie.S01E01.part01.rar')
+          if (-not (Get-ChildItem (Join-Path $t '*.mkv'))) { throw 'plain x must not delete output files' }
+          exit 0  # the non-zero exit code of Unpack.exe is expected here
+
       - name: "Test: drag and drop of a later part"
         if: steps.plan.outputs.build == 'true'
         shell: pwsh

@@ -558,7 +558,7 @@ HRESULT Extract(
         #endif
 
     const bool deleteOutFilesOnError =
-           options.DeleteOutFilesOnError
+           options.DeleteArcAfterExtract
         && options.DeleteCallback
         && !options.TestMode
         && !options.StdOutMode;
