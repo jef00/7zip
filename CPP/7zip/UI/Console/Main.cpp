@@ -811,13 +811,13 @@ static void PrintHexId(CStdOutStream &so, UInt64 id)
     - without arguments (double click): all archives (.rar, .zip, .7z) and
       first volumes of split sets (name.part1.rar, name.7z.001, name.zip.001)
       in folder of program are processed, after user confirmed the list.
-      User can also select to keep the archives.
       If there are no archives there, we use current folder instead.
     - or with only names of existing files (drag and drop to program icon).
   It works as:  x -sdel -aou -o{folder of archive} ...
-  So archives are extracted, and all volumes of archive are deleted,
-  if there were no errors. Existing files are not overwritten:
-  new file gets another name (-aou).
+  But archives are not deleted during extraction: after all archives
+  were extracted, the program shows all files (volumes) of archives that
+  were extracted without errors, and asks user: delete or keep them.
+  Existing files are not overwritten: new file gets another name (-aou).
 */
 
 #ifndef _WIN32
@@ -936,26 +936,9 @@ static void Unp_FindArchives(const FString &dirPrefix, UStringVector &paths)
   }
 }
 
-/* shows the list of archives and asks user. Returns:
-     0 : do nothing
-     1 : unpack and delete archives
-     2 : unpack and keep archives */
-static unsigned Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
+// reads line and returns first character of answer in upper case, or 0
+static int Unp_ReadAnswer()
 {
-  g_StdOut << "Folder: " << fs2us(dirPrefix) << endl << endl;
-  const unsigned prefixLen = fs2us(dirPrefix).Len();
-  FOR_VECTOR (i, arcs)
-    g_StdOut << "  " << (i + 1) << ". " << arcs[i].Ptr(prefixLen) << endl;
-  g_StdOut << endl;
-  if (arcs.Size() == 1)
-    g_StdOut << "Unpack this archive?";
-  else
-    g_StdOut << "Unpack these " << arcs.Size() << " archives?";
-  g_StdOut << endl
-      << "  Y = yes, unpack and delete the archives" << endl
-      << "  K = unpack and keep the archives" << endl
-      << "  N = no, do nothing" << endl
-      << "Type Y, K or N and press Enter: ";
   g_StdOut.Flush();
   int answer = 0;
   for (;;)
@@ -967,12 +950,55 @@ static unsigned Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
       answer = c;
   }
   g_StdOut << endl;
+  if (answer >= 'a' && answer <= 'z')
+    answer -= 'a' - 'A';
+  return answer;
+}
+
+/* shows all files of archives that were extracted, and asks user.
+   returns true, if user wants to delete these files.
+   Another answers (and no answer) mean that files must be kept. */
+static bool Unp_AskDelete(const UStringVector &paths)
+{
+  g_StdOut << endl << "----------------------------------------" << endl;
+  if (paths.Size() == 1)
+    g_StdOut << "Unpacked. This archive file is not needed anymore:";
+  else
+    g_StdOut << "Unpacked. These " << paths.Size() << " archive files are not needed anymore:";
+  g_StdOut << endl << endl;
+  FOR_VECTOR (i, paths)
+    g_StdOut << "  " << paths[i] << endl;
+  g_StdOut << endl
+      << (paths.Size() == 1 ? "Delete or keep this file?" : "Delete or keep these files?") << endl
+      << "  D = delete" << endl
+      << "  K = keep" << endl
+      << "Type D or K and press Enter: ";
+  const int answer = Unp_ReadAnswer();
+  // Y, J : "yes", "ja" for question about deleting
+  return answer == 'D' || answer == 'Y' || answer == 'J';
+}
+
+/* shows the list of archives and asks user.
+   returns true, if user wants to unpack archives */
+static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
+{
+  g_StdOut << "Folder: " << fs2us(dirPrefix) << endl << endl;
+  const unsigned prefixLen = fs2us(dirPrefix).Len();
+  FOR_VECTOR (i, arcs)
+    g_StdOut << "  " << (i + 1) << ". " << arcs[i].Ptr(prefixLen) << endl;
+  g_StdOut << endl;
+  if (arcs.Size() == 1)
+    g_StdOut << "Unpack this archive?";
+  else
+    g_StdOut << "Unpack these " << arcs.Size() << " archives?";
+  g_StdOut << endl
+      << "  Y = yes, unpack" << endl
+      << "  N = no, do nothing" << endl
+      << "After unpacking you can select: delete or keep the archives." << endl
+      << "Type Y or N and press Enter: ";
+  const int answer = Unp_ReadAnswer();
   // J : "ja" (Dutch, German)
-  if (answer == 'y' || answer == 'Y' || answer == 'j' || answer == 'J')
-    return 1;
-  if (answer == 'k' || answer == 'K')
-    return 2;
-  return 0;
+  return answer == 'Y' || answer == 'J';
 }
 
 // if (path) is some volume (name.part3.rar), we return path of first volume in (res).
@@ -1059,15 +1085,13 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
     }
     if (!arcs.IsEmpty())
     {
-      const unsigned answer = Unp_Confirm(dirPrefix, arcs);
-      if (answer == 0)
+      if (!Unp_Confirm(dirPrefix, arcs))
       {
         g_UnpackerMode = true;
         g_Unpacker_WasCanceled = true;
         commandStrings.Clear();
         return true;
       }
-      g_Unpacker_KeepArcs = (answer == 2);
     }
   }
   else
@@ -1766,7 +1790,10 @@ int Main2(
       deleteCallback.So = g_StdStream;
       deleteCallback.Se = g_ErrStream;
       eo.DeleteCallback = &deleteCallback;
-      eo.KeepArcAfterExtract = g_Unpacker_KeepArcs;
+      // unpacker mode: archives are deleted later, if user wants it
+      UStringVector unpArcFiles;
+      if (g_UnpackerMode)
+        eo.ArcFiles_ForDelete = &unpArcFiles;
 
       UString errorMessage;
       CDecompressStat stat;
@@ -1892,6 +1919,27 @@ int Main2(
         }
       }
       } // if (so)
+
+      if (!unpArcFiles.IsEmpty())
+      {
+        /* unpacker mode: all archives are closed already.
+           (unpArcFiles) contains only files of archives that were
+           extracted without errors and warnings. */
+        if (g_StdStream) g_StdStream->Flush();
+        if (g_ErrStream) g_ErrStream->Flush();
+        if (!Unp_AskDelete(unpArcFiles))
+          g_Unpacker_KeepArcs = true;
+        else
+        {
+          FOR_VECTOR (i, unpArcFiles)
+          {
+            const UString &path = unpArcFiles[i];
+            deleteCallback.ArcFile_DeleteResult(path, NDir::DeleteFileAlways(us2fs(path)));
+          }
+          if (deleteCallback.NumErrors != 0 && retCode == NExitCode::kSuccess)
+            retCode = NExitCode::kWarning;
+        }
+      }
     }
     else // if_(!isExtractGroupCommand)
     {

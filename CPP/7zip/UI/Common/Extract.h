@@ -82,9 +82,12 @@ struct IArcDeleteCallback
 struct CExtractOptions: public CExtractOptionsBase
 {
   IArcDeleteCallback *DeleteCallback; // it's required for DeleteArcAfterExtract mode
-  /* (DeleteArcAfterExtract) mode, but archive is not deleted:
-     only incomplete files are deleted after failed extraction. */
-  bool KeepArcAfterExtract;
+  /* if it is not NULL in (DeleteArcAfterExtract) mode, archives are not
+     deleted in Extract(): the paths of all files (volumes) of archives
+     that can be deleted are added to this list, and the caller can
+     delete them later. Incomplete files are still deleted after failed
+     extraction. */
+  UStringVector *ArcFiles_ForDelete;
   bool StdInMode;
   bool StdOutMode;
   bool YesToAll;
@@ -105,7 +108,7 @@ struct CExtractOptions: public CExtractOptionsBase
 
   CExtractOptions():
       DeleteCallback(NULL),
-      KeepArcAfterExtract(false),
+      ArcFiles_ForDelete(NULL),
       StdInMode(false),
       StdOutMode(false),
       YesToAll(false),

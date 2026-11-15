@@ -611,7 +611,6 @@ HRESULT Extract(
          - overwrite mode can not skip files,
          - UI reports that there were no errors and no warnings. */
     if (options.DeleteArcAfterExtract
-        && !options.KeepArcAfterExtract
         && options.DeleteCallback
         && !options.TestMode
         && !options.StdInMode
@@ -643,12 +642,17 @@ HRESULT Extract(
         if (!found)
           delPaths.Add(vp);
       }
+      if (options.ArcFiles_ForDelete)
+        *options.ArcFiles_ForDelete += delPaths;
+      else
+      {
       // we must close all file handles of archive before deleting
       arcLink.Release();
       FOR_VECTOR (k, delPaths)
       {
         const bool res = NFile::NDir::DeleteFileAlways(us2fs(delPaths[k]));
         options.DeleteCallback->ArcFile_DeleteResult(delPaths[k], res);
+      }
       }
       }
     }

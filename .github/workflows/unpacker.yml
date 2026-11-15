@@ -109,7 +109,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: "Test: double-click mode asks, then unpacks and deletes the archives"
+      - name: "Test: double-click mode asks, unpacks, then asks again and deletes the archives"
         if: steps.plan.outputs.build == 'true'
         shell: pwsh
         run: |
@@ -135,8 +135,9 @@ jobs:
           "n" | .\Unpack.exe
           if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE after answer N" }
           if ((Get-ChildItem).Count -ne $before -or (Get-ChildItem *.rar).Count -ne 7) { throw 'answer N must not change the folder' }
-          # answer Y: all archives are unpacked and deleted. Enter closes the program.
-          "y" | .\Unpack.exe
+          # answer Y: all archives are unpacked. Then answer D: the archives are deleted.
+          # Enter closes the program.
+          "y", "d" | .\Unpack.exe
           $code = $LASTEXITCODE
           Get-ChildItem | Format-Table Name, Length
           if ($code -ne 0) { throw "exit code $code" }
@@ -160,15 +161,21 @@ jobs:
           python .github\scripts\mkrar5.py $src (Join-Path $t 'Serie.S01E01') 500000 2
           Copy-Item "$env:RUNNER_TEMP\Unpack.exe" $t
           Push-Location $t
-          "k" | .\Unpack.exe
+          # answer Y: unpack. Then answer K: keep the archives
+          "y", "k" | .\Unpack.exe
           $code = $LASTEXITCODE
           Get-ChildItem | Format-Table Name, Length
           if ($code -ne 0) { throw "exit code $code" }
           if ((Get-ChildItem *.rar).Count -ne 3) { throw 'archives must be kept' }
           if ((Get-FileHash Serie.S01E01.mkv).Hash -ne (Get-FileHash $src).Hash) { throw 'content differs' }
+          # no answer to the second question (only Enter): archives are kept too
+          Remove-Item Serie.S01E01.mkv
+          "y", "" | .\Unpack.exe
+          if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
+          if ((Get-ChildItem *.rar).Count -ne 3) { throw 'archives must be kept without answer D' }
           # with a missing part: archives kept, incomplete video deleted
           Remove-Item Serie.S01E01.mkv, Serie.S01E01.part03.rar
-          "k" | .\Unpack.exe
+          "y", "d" | .\Unpack.exe
           if ($LASTEXITCODE -eq 0) { throw 'exit code must not be 0' }
           if ((Get-ChildItem *.rar).Count -ne 2) { throw 'parts must be kept' }
           if (Get-ChildItem *.mkv) { throw 'incomplete video must be deleted' }
@@ -220,7 +227,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $t = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\drop"
           python .github\scripts\mkrar5.py "$env:RUNNER_TEMP\src\Serie.S01E01.mkv" (Join-Path $t 'Serie.S01E01') 500000 2
-          "`n" | & "$env:RUNNER_TEMP\Unpack.exe" (Join-Path $t 'Serie.S01E01.part02.rar')
+          # answer K: unpacked, all parts are kept
+          "k" | & "$env:RUNNER_TEMP\Unpack.exe" (Join-Path $t 'Serie.S01E01.part02.rar')
+          if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
+          if ((Get-ChildItem (Join-Path $t '*.rar')).Count -ne 3) { throw 'parts must be kept after answer K' }
+          Remove-Item (Join-Path $t 'Serie.S01E01.mkv')
+          # answer D: unpacked, all parts are deleted
+          "d" | & "$env:RUNNER_TEMP\Unpack.exe" (Join-Path $t 'Serie.S01E01.part02.rar')
           $code = $LASTEXITCODE
           Get-ChildItem $t | Format-Table Name, Length
           if ($code -ne 0) { throw "exit code $code" }
@@ -256,7 +269,7 @@ jobs:
             --title "Unpack (7-Zip $VERSION)" \
             --notes "Unpack.exe is a modified build of 7-Zip $VERSION (64-bit Windows, standalone).
 
-          Put it in the folder with the downloaded files and double-click it. It lists the archives it found (rar, zip, 7z and split sets like name.part1.rar or name.7z.001) and asks before it starts: Y unpacks and deletes the archives, K unpacks and keeps them, N does nothing. Archives that could not be unpacked are kept, and existing files are never overwritten.
+          Put it in the folder with the downloaded files and double-click it. It lists the archives it found (rar, zip, 7z and split sets like name.part1.rar or name.7z.001) and asks before it starts (Y unpacks, N does nothing). After unpacking it shows the archive files that are not needed anymore and asks again: D deletes them, K keeps them. You can also drop an archive (or any part of it) on Unpack.exe. Archives that could not be unpacked are never deleted, and existing files are never overwritten.
 
           7-Zip is licensed under the GNU LGPL. The source code of this build is this repository at commit $SHA."
 
@@ -291,7 +304,7 @@ jobs:
           python3 .github/scripts/mkrar5.py "$SRC/Serie.S01E01.mkv" "$D/Serie.S01E01" 500000 2
           cp "$Z" "$D/7zz"
           cd "$HOME"
-          printf 'y\n\n' | "$D/7zz"
+          printf 'y\nd\n\n' | "$D/7zz"
           ls -la "$D"
           if ls "$D"/*.rar > /dev/null 2>&1; then echo "parts were not deleted"; exit 1; fi
           cmp "$D/Film [2026] & more.mkv" "$SRC/Film [2026] & more.mkv"
@@ -321,7 +334,7 @@ jobs:
           mkdir -p "$D"
           python3 .github/scripts/mkrar5.py "$SRC/Serie.S01E01.mkv" "$D/Serie.S01E01" 500000 2
           cd "$D"
-          printf 'y\n\n' | "$Z"
+          printf 'y\nd\n\n' | "$Z"
           ls -la
           if ls *.rar > /dev/null 2>&1; then echo "parts were not deleted"; exit 1; fi
           cmp Serie.S01E01.mkv "$SRC/Serie.S01E01.mkv"
