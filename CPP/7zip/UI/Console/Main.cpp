@@ -936,15 +936,21 @@ static void Unp_FindArchives(const FString &dirPrefix, UStringVector &paths)
   }
 }
 
-// reads line and returns first character of answer in upper case, or 0
+/* reads line and returns first character of answer in upper case,
+     0 : empty line (Enter),
+    -1 : there is no input */
 static int Unp_ReadAnswer()
 {
   g_StdOut.Flush();
-  int answer = 0;
+  int answer = -1;
   for (;;)
   {
     const int c = getchar();
-    if (c == EOF || c == '\n')
+    if (c == EOF)
+      break;
+    if (answer < 0)
+      answer = 0;
+    if (c == '\n')
       break;
     if (answer == 0 && c != ' ' && c != '\t' && c != '\r')
       answer = c;
@@ -978,8 +984,11 @@ static bool Unp_AskDelete(const UStringVector &paths)
   return answer == 'D' || answer == 'Y' || answer == 'J';
 }
 
-/* shows the list of archives and asks user.
-   returns true, if user wants to unpack archives */
+/* shows the list of archives and waits for Enter.
+   There is no question here, because nothing is deleted without second
+   confirmation after unpacking. User can close the window to do nothing.
+   returns false, if there is no input, or if user typed N
+   (N was the answer "do nothing" in previous versions). */
 static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
 {
   g_StdOut << "Folder: " << fs2us(dirPrefix) << endl << endl;
@@ -988,17 +997,15 @@ static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
     g_StdOut << "  " << (i + 1) << ". " << arcs[i].Ptr(prefixLen) << endl;
   g_StdOut << endl;
   if (arcs.Size() == 1)
-    g_StdOut << "Unpack this archive?";
+    g_StdOut << "This archive will be unpacked.";
   else
-    g_StdOut << "Unpack these " << arcs.Size() << " archives?";
+    g_StdOut << "These " << arcs.Size() << " archives will be unpacked.";
   g_StdOut << endl
-      << "  Y = yes, unpack" << endl
-      << "  N = no, do nothing" << endl
       << "After unpacking you can select: delete or keep the archives." << endl
-      << "Type Y or N and press Enter: ";
+      << endl
+      << "Press Enter to start: ";
   const int answer = Unp_ReadAnswer();
-  // J : "ja" (Dutch, German)
-  return answer == 'Y' || answer == 'J';
+  return answer >= 0 && answer != 'N';
 }
 
 // if (path) is some volume (name.part3.rar), we return path of first volume in (res).

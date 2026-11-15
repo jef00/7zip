@@ -109,7 +109,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: "Test: double-click mode asks, unpacks, then asks again and deletes the archives"
+      - name: "Test: double-click mode waits for Enter, unpacks, then asks and deletes the archives"
         if: steps.plan.outputs.build == 'true'
         shell: pwsh
         run: |
@@ -131,13 +131,17 @@ jobs:
           Get-ChildItem | Format-Table Name, Length
           $before = (Get-ChildItem).Count
           # program is started without arguments, like a double click.
-          # answer N: nothing must change
+          # no input (window was closed): nothing must change
+          $null | .\Unpack.exe
+          if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE without input" }
+          if ((Get-ChildItem).Count -ne $before -or (Get-ChildItem *.rar).Count -ne 7) { throw 'no input must not change the folder' }
+          # N is not shown anymore, but it still means: do nothing
           "n" | .\Unpack.exe
           if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE after answer N" }
           if ((Get-ChildItem).Count -ne $before -or (Get-ChildItem *.rar).Count -ne 7) { throw 'answer N must not change the folder' }
-          # answer Y: all archives are unpacked. Then answer D: the archives are deleted.
+          # Enter: all archives are unpacked. Then answer D: the archives are deleted.
           # Enter closes the program.
-          "y", "d" | .\Unpack.exe
+          "", "d" | .\Unpack.exe
           $code = $LASTEXITCODE
           Get-ChildItem | Format-Table Name, Length
           if ($code -ne 0) { throw "exit code $code" }
@@ -269,7 +273,7 @@ jobs:
             --title "Unpack (7-Zip $VERSION)" \
             --notes "Unpack.exe is a modified build of 7-Zip $VERSION (64-bit Windows, standalone).
 
-          Put it in the folder with the downloaded files and double-click it. It lists the archives it found (rar, zip, 7z and split sets like name.part1.rar or name.7z.001) and asks before it starts (Y unpacks, N does nothing). After unpacking it shows the archive files that are not needed anymore and asks again: D deletes them, K keeps them. You can also drop an archive (or any part of it) on Unpack.exe. Archives that could not be unpacked are never deleted, and existing files are never overwritten.
+          Put it in the folder with the downloaded files and double-click it. It lists the archives it found (rar, zip, 7z and split sets like name.part1.rar or name.7z.001) and waits for Enter before it starts (close the window to do nothing). After unpacking it shows the archive files that are not needed anymore and asks again: D deletes them, K keeps them. You can also drop an archive (or any part of it) on Unpack.exe. Archives that could not be unpacked are never deleted, and existing files are never overwritten.
 
           7-Zip is licensed under the GNU LGPL. The source code of this build is this repository at commit $SHA."
 
