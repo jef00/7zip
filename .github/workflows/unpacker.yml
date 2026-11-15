@@ -109,7 +109,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: "Test: double-click mode waits for Enter, unpacks, then asks and deletes the archives"
+      - name: "Test: double-click mode unpacks at once, then asks and deletes the archives"
         if: steps.plan.outputs.build == 'true'
         shell: pwsh
         run: |
@@ -129,19 +129,10 @@ jobs:
           Push-Location $t
           .\Unpack.exe a unrelated.zip note.txt | Out-Null
           Get-ChildItem | Format-Table Name, Length
-          $before = (Get-ChildItem).Count
-          # program is started without arguments, like a double click.
-          # no input (window was closed): nothing must change
-          $null | .\Unpack.exe
-          if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE without input" }
-          if ((Get-ChildItem).Count -ne $before -or (Get-ChildItem *.rar).Count -ne 7) { throw 'no input must not change the folder' }
-          # N is not shown anymore, but it still means: do nothing
-          "n" | .\Unpack.exe
-          if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE after answer N" }
-          if ((Get-ChildItem).Count -ne $before -or (Get-ChildItem *.rar).Count -ne 7) { throw 'answer N must not change the folder' }
-          # Enter: all archives are unpacked. Then answer D: the archives are deleted.
-          # Enter closes the program.
-          "", "d" | .\Unpack.exe
+          # program is started without arguments, like a double click:
+          # all archives are unpacked without question.
+          # Then answer D: the archives are deleted. Enter closes the program.
+          "d" | .\Unpack.exe
           $code = $LASTEXITCODE
           Get-ChildItem | Format-Table Name, Length
           if ($code -ne 0) { throw "exit code $code" }
@@ -165,21 +156,21 @@ jobs:
           python .github\scripts\mkrar5.py $src (Join-Path $t 'Serie.S01E01') 500000 2
           Copy-Item "$env:RUNNER_TEMP\Unpack.exe" $t
           Push-Location $t
-          # answer Y: unpack. Then answer K: keep the archives
-          "y", "k" | .\Unpack.exe
+          # answer K after unpacking: keep the archives
+          "k" | .\Unpack.exe
           $code = $LASTEXITCODE
           Get-ChildItem | Format-Table Name, Length
           if ($code -ne 0) { throw "exit code $code" }
           if ((Get-ChildItem *.rar).Count -ne 3) { throw 'archives must be kept' }
           if ((Get-FileHash Serie.S01E01.mkv).Hash -ne (Get-FileHash $src).Hash) { throw 'content differs' }
-          # no answer to the second question (only Enter): archives are kept too
+          # no answer to the question (only Enter): archives are kept too
           Remove-Item Serie.S01E01.mkv
-          "y", "" | .\Unpack.exe
+          "" | .\Unpack.exe
           if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
           if ((Get-ChildItem *.rar).Count -ne 3) { throw 'archives must be kept without answer D' }
           # with a missing part: archives kept, incomplete video deleted
           Remove-Item Serie.S01E01.mkv, Serie.S01E01.part03.rar
-          "y", "d" | .\Unpack.exe
+          "d" | .\Unpack.exe
           if ($LASTEXITCODE -eq 0) { throw 'exit code must not be 0' }
           if ((Get-ChildItem *.rar).Count -ne 2) { throw 'parts must be kept' }
           if (Get-ChildItem *.mkv) { throw 'incomplete video must be deleted' }
@@ -196,7 +187,7 @@ jobs:
           Remove-Item (Join-Path $t 'Serie.S01E01.part03.rar')
           Copy-Item "$env:RUNNER_TEMP\Unpack.exe" $t
           Push-Location $t
-          "y" | .\Unpack.exe
+          "d" | .\Unpack.exe
           $code = $LASTEXITCODE
           Get-ChildItem | Format-Table Name, Length
           if ($code -eq 0) { throw 'exit code must not be 0' }
@@ -273,7 +264,7 @@ jobs:
             --title "Unpack (7-Zip $VERSION)" \
             --notes "Unpack.exe is a modified build of 7-Zip $VERSION (64-bit Windows, standalone).
 
-          Put it in the folder with the downloaded files and double-click it. It lists the archives it found (rar, zip, 7z and split sets like name.part1.rar or name.7z.001) and waits for Enter before it starts (close the window to do nothing). After unpacking it shows the archive files that are not needed anymore and asks again: D deletes them, K keeps them. You can also drop an archive (or any part of it) on Unpack.exe. Archives that could not be unpacked are never deleted, and existing files are never overwritten.
+          Put it in the folder with the downloaded files and double-click it. It lists the archives it found (rar, zip, 7z and split sets like name.part1.rar or name.7z.001) and unpacks them at once. After unpacking it shows the archive files that are not needed anymore and asks again: D deletes them, K keeps them. You can also drop an archive (or any part of it) on Unpack.exe. Archives that could not be unpacked are never deleted, and existing files are never overwritten.
 
           7-Zip is licensed under the GNU LGPL. The source code of this build is this repository at commit $SHA."
 
@@ -308,7 +299,7 @@ jobs:
           python3 .github/scripts/mkrar5.py "$SRC/Serie.S01E01.mkv" "$D/Serie.S01E01" 500000 2
           cp "$Z" "$D/7zz"
           cd "$HOME"
-          printf 'y\nd\n\n' | "$D/7zz"
+          printf 'd\n\n' | "$D/7zz"
           ls -la "$D"
           if ls "$D"/*.rar > /dev/null 2>&1; then echo "parts were not deleted"; exit 1; fi
           cmp "$D/Film [2026] & more.mkv" "$SRC/Film [2026] & more.mkv"
@@ -324,7 +315,7 @@ jobs:
           cp "$Z" "$D/7zz"
           cd "$HOME"
           code=0
-          printf 'y\n\n' | "$D/7zz" || code=$?
+          printf 'd\n\n' | "$D/7zz" || code=$?
           ls -la "$D"
           if [ "$code" = "0" ]; then echo "exit code must not be 0"; exit 1; fi
           if [ "$(ls "$D"/*.rar | wc -l | tr -d ' ')" != "2" ]; then echo "parts must be kept"; exit 1; fi
@@ -338,7 +329,7 @@ jobs:
           mkdir -p "$D"
           python3 .github/scripts/mkrar5.py "$SRC/Serie.S01E01.mkv" "$D/Serie.S01E01" 500000 2
           cd "$D"
-          printf 'y\nd\n\n' | "$Z"
+          printf 'd\n\n' | "$Z"
           ls -la
           if ls *.rar > /dev/null 2>&1; then echo "parts were not deleted"; exit 1; fi
           cmp Serie.S01E01.mkv "$SRC/Serie.S01E01.mkv"

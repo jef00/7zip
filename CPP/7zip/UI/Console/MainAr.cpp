@@ -241,7 +241,6 @@ static int Main_Orig
 
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
-extern bool g_Unpacker_WasCanceled;
 extern bool g_Unpacker_KeepArcs;
 
 int Z7_CDECL main
@@ -261,9 +260,7 @@ int Z7_CDECL main
     g_StdOut.Flush();
     g_StdErr.Flush();
     const char *s;
-    if (g_Unpacker_WasCanceled)
-      s = "Nothing was done.";
-    else if (g_Unpacker_NumSets == 0)
+    if (g_Unpacker_NumSets == 0)
       s = "Nothing to unpack: no archives (rar, zip, 7z or split parts) were found.\n"
           "Put this program in the folder with the downloaded files and start it again.";
     else if (res == NExitCode::kWarning)

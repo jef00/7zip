@@ -810,7 +810,8 @@ static void PrintHexId(CStdOutStream &so, UInt64 id)
   Unpacker mode is used, if program was started
     - without arguments (double click): all archives (.rar, .zip, .7z) and
       first volumes of split sets (name.part1.rar, name.7z.001, name.zip.001)
-      in folder of program are processed, after user confirmed the list.
+      in folder of program are processed. The program shows the list
+      and starts at once: there is no question before extraction.
       If there are no archives there, we use current folder instead.
     - or with only names of existing files (drag and drop to program icon).
   It works as:  x -sdel -aou -o{folder of archive} ...
@@ -829,12 +830,10 @@ FString GetModuleDirPrefix(); // ArchiveCommandLine.cpp : folder from args[0]
 
 extern bool g_UnpackerMode;
 extern unsigned g_Unpacker_NumSets;
-extern bool g_Unpacker_WasCanceled;
 extern bool g_Unpacker_KeepArcs;
 bool g_Unpacker_KeepArcs = false;
 bool g_UnpackerMode = false;
 unsigned g_Unpacker_NumSets = 0;
-bool g_Unpacker_WasCanceled = false;
 
 // name.part{digits}.rar
 static bool Unp_ParseRarPartName(const UString &name, unsigned &baseLen, unsigned &numDigits, UInt32 &num)
@@ -936,21 +935,15 @@ static void Unp_FindArchives(const FString &dirPrefix, UStringVector &paths)
   }
 }
 
-/* reads line and returns first character of answer in upper case,
-     0 : empty line (Enter),
-    -1 : there is no input */
+// reads line and returns first character of answer in upper case, or 0
 static int Unp_ReadAnswer()
 {
   g_StdOut.Flush();
-  int answer = -1;
+  int answer = 0;
   for (;;)
   {
     const int c = getchar();
-    if (c == EOF)
-      break;
-    if (answer < 0)
-      answer = 0;
-    if (c == '\n')
+    if (c == EOF || c == '\n')
       break;
     if (answer == 0 && c != ' ' && c != '\t' && c != '\r')
       answer = c;
@@ -984,12 +977,10 @@ static bool Unp_AskDelete(const UStringVector &paths)
   return answer == 'D' || answer == 'Y' || answer == 'J';
 }
 
-/* shows the list of archives and waits for Enter.
-   There is no question here, because nothing is deleted without second
-   confirmation after unpacking. User can close the window to do nothing.
-   returns false, if there is no input, or if user typed N
-   (N was the answer "do nothing" in previous versions). */
-static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
+/* shows the list of archives that will be unpacked.
+   There is no question here: extraction doesn't overwrite files, and
+   nothing is deleted without confirmation after unpacking. */
+static void Unp_ShowArchives(const FString &dirPrefix, const UStringVector &arcs)
 {
   g_StdOut << "Folder: " << fs2us(dirPrefix) << endl << endl;
   const unsigned prefixLen = fs2us(dirPrefix).Len();
@@ -997,15 +988,12 @@ static bool Unp_Confirm(const FString &dirPrefix, const UStringVector &arcs)
     g_StdOut << "  " << (i + 1) << ". " << arcs[i].Ptr(prefixLen) << endl;
   g_StdOut << endl;
   if (arcs.Size() == 1)
-    g_StdOut << "This archive will be unpacked.";
+    g_StdOut << "Unpacking this archive.";
   else
-    g_StdOut << "These " << arcs.Size() << " archives will be unpacked.";
+    g_StdOut << "Unpacking these " << arcs.Size() << " archives.";
   g_StdOut << endl
-      << "After unpacking you can select: delete or keep the archives." << endl
-      << endl
-      << "Press Enter to start: ";
-  const int answer = Unp_ReadAnswer();
-  return answer >= 0 && answer != 'N';
+      << "After unpacking you can select: delete or keep the archives." << endl;
+  g_StdOut.Flush();
 }
 
 // if (path) is some volume (name.part3.rar), we return path of first volume in (res).
@@ -1091,15 +1079,7 @@ static bool Unp_PrepareCommand(UStringVector &commandStrings)
       }
     }
     if (!arcs.IsEmpty())
-    {
-      if (!Unp_Confirm(dirPrefix, arcs))
-      {
-        g_UnpackerMode = true;
-        g_Unpacker_WasCanceled = true;
-        commandStrings.Clear();
-        return true;
-      }
-    }
+      Unp_ShowArchives(dirPrefix, arcs);
   }
   else
   {
