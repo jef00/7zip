@@ -1,0 +1,84 @@
+name: "Standalone 7-Zip (no 7z.dll)"
+
+# Builds unmodified 7-Zip as one standalone console program for Windows x64:
+# the Alone2 bundle (7zz.exe) contains all formats and codecs that are
+# in 7z.dll in the normal distribution, so no 7z.dll is needed.
+
+on:
+  push:
+    branches: [standalone]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUNDLE_PATH: 'CPP\7zip\Bundles\Alone2'
+
+jobs:
+  windows-msvc:
+    name: Windows MSVC x64
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build (nmake, x64)
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VSDIR=%%i"
+          call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cd /d "%GITHUB_WORKSPACE%\%BUNDLE_PATH%"
+          nmake /nologo PLATFORM=x64 > build.log 2>&1
+          if errorlevel 1 (
+            powershell -Command "Get-Content build.log -Tail 150"
+            exit /b 1
+          )
+          mkdir "%RUNNER_TEMP%\out"
+          copy /y x64\7zz.exe "%RUNNER_TEMP%\out\7zz.exe"
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: log-windows-msvc-x64
+          path: ${{ env.BUNDLE_PATH }}\build.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: "Test: works alone in an empty folder"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $t = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\t"
+          Copy-Item "$env:RUNNER_TEMP\out\7zz.exe" $t
+          Push-Location $t
+          # no 7z.dll here: all formats must be inside the program
+          $info = (.\7zz.exe i) -join "`n"
+          foreach ($f in 'Rar5', 'zip', '7z', 'tar', 'iso') {
+            if ($info -notmatch "(?m)\s$f\s") { throw "format is missing: $f" }
+          }
+          $buf = New-Object byte[] 2000000
+          [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buf)
+          [IO.File]::WriteAllBytes("$t\data.bin", $buf)
+          foreach ($ext in '7z', 'zip') {
+            .\7zz.exe a "test.$ext" data.bin | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "can't create $ext" }
+            .\7zz.exe x "test.$ext" "-oout_$ext" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "can't extract $ext" }
+            if ((Get-FileHash "out_$ext\data.bin").Hash -ne (Get-FileHash data.bin).Hash) { throw "content differs: $ext" }
+          }
+          .\7zz.exe b -md20 -mmt2 "-bt"
+          if ($LASTEXITCODE -ne 0) { throw 'benchmark failed' }
+          Pop-Location
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: 7zz-standalone-win-x64
+          path: ${{ runner.temp }}\out\7zz.exe
+          if-no-files-found: error
+          retention-days: 90
